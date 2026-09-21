@@ -22,7 +22,8 @@ This is the whole product. A script enforces a 1GB cap over both cache dirs:
 ## Schedule
 
 - weekly launchd agent on zombie, Sundays 04:00, `~/Library/LaunchAgents`
-- no daemon, no GUI, exits after one pass
+- no daemon, exits after one pass
+- GUI from [gui](gui.md) edits the same prefs the schedule reads
 
 ## Ship
 
