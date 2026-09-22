@@ -12,8 +12,8 @@ You gave Spotify a monthly subscription, and it decided to move into your SSD re
 
 Left unattended, Spotify turns your Mac into a landfill of unplayed audio chunks, cached telemetry, and album art from playlists you skipped through three years ago:
 
-- `~/Library/Caches/com.spotify.client`
-- `~/Library/Application Support/Spotify/PersistentCache`
+- `~/Library/Caches/com.spotify.client/Data`
+- `~/Library/Application Support/Spotify/PersistentCache/Storage`
 
 Before you know it, a music player is quietly squatting on 20 GB to 40 GB of disk space on a 256 GB drive, with zero native settings to enforce a hard cap.
 

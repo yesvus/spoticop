@@ -34,12 +34,12 @@ final class ConfigManager: ObservableObject {
 
     var cacheAURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Caches/com.spotify.client")
+            .appendingPathComponent("Library/Caches/com.spotify.client/Data")
     }
 
     var cacheBURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Spotify/PersistentCache")
+            .appendingPathComponent("Library/Application Support/Spotify/PersistentCache/Storage")
     }
 
     init() {

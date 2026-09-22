@@ -6,10 +6,10 @@ VERSION="0.1.0"
 PROG="spoticop"
 
 DEFAULT_CAP="1GB"
-DEFAULT_CACHE_A="$HOME/Library/Caches/com.spotify.client"
-DEFAULT_CACHE_B="$HOME/Library/Application Support/Spotify/PersistentCache"
-LINUX_CACHE_A="$HOME/.cache/spotify"
-LINUX_CACHE_B="$HOME/.config/spotify/PersistentCache"
+DEFAULT_CACHE_A="$HOME/Library/Caches/com.spotify.client/Data"
+DEFAULT_CACHE_B="$HOME/Library/Application Support/Spotify/PersistentCache/Storage"
+LINUX_CACHE_A="${XDG_CACHE_HOME:-$HOME/.cache}/spotify/Data"
+LINUX_CACHE_B="${XDG_CACHE_HOME:-$HOME/.cache}/spotify/Storage"
 DEFAULT_LOG="$HOME/Library/Logs/spoticop.log"
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/spoticop/config"
 
@@ -79,9 +79,9 @@ dir_size_bytes() {
 spotify_running() {
   checker="${SPOTICOP_PGREP:-pgrep}"
   if command -v "$checker" >/dev/null 2>&1; then
-    "$checker" -x Spotify >/dev/null 2>&1
+    "$checker" -x Spotify >/dev/null 2>&1 || "$checker" -x spotify >/dev/null 2>&1 || "$checker" -x sp_relauncher >/dev/null 2>&1
   else
-    ps -A -o comm= 2>/dev/null | grep -qx "Spotify"
+    ps -A -o comm= 2>/dev/null | grep -Eiq "(/|^)(Spotify|spotify|sp_relauncher)$"
   fi
 }
 
@@ -94,6 +94,17 @@ log_line() {
 inside_watch() {
   case "$1" in
     "$CACHE_A"/* | "$CACHE_B"/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_protected() {
+  case "$1" in
+    */Users/* | */Users | */Update/* | */Update | */WidevineCdm/* | */WidevineCdm) return 0 ;;
+    *.ldb/* | *.ldb) return 0 ;;
+    */index.dat | */es_counters.dat | */pe_counters.dat) return 0 ;;
+    */Local\ State | */Preferences | */prefs) return 0 ;;
+    *.bnk | *.pb | *.restore | *.state | *.json) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -166,7 +177,20 @@ if [ ! -d "$CACHE_A" ] && [ -d "$LINUX_CACHE_A" ] && [ -z "$CACHE_A_ARG" ] && [ 
 fi
 if [ ! -d "$CACHE_B" ] && [ -d "$LINUX_CACHE_B" ] && [ -z "$CACHE_B_ARG" ] && [ -z "${SPOTICOP_CACHE_B:-}" ]; then
   CACHE_B="$LINUX_CACHE_B"
+elif [ ! -d "$CACHE_B" ] && [ -d "${XDG_CONFIG_HOME:-$HOME/.config}/spotify/Storage" ] && [ -z "$CACHE_B_ARG" ] && [ -z "${SPOTICOP_CACHE_B:-}" ]; then
+  CACHE_B="${XDG_CONFIG_HOME:-$HOME/.config}/spotify/Storage"
 fi
+
+case "$(basename "$CACHE_A")" in
+  com.spotify.client|spotify)
+    [ -d "$CACHE_A/Data" ] && CACHE_A="$CACHE_A/Data"
+    ;;
+esac
+case "$(basename "$CACHE_B")" in
+  PersistentCache)
+    [ -d "$CACHE_B/Storage" ] && CACHE_B="$CACHE_B/Storage"
+    ;;
+esac
 
 CAP_BYTES=$(parse_size "$CAP_STR") || die "invalid cap size: $CAP_STR (try 500MB, 1GB)" 2
 [ "$CAP_BYTES" -gt 0 ] || die "cap must be greater than zero" 2
@@ -178,7 +202,11 @@ if spotify_running; then
 fi
 
 SIZE_A=$(dir_size_bytes "$CACHE_A")
-SIZE_B=$(dir_size_bytes "$CACHE_B")
+if [ -n "$CACHE_B" ] && [ "$CACHE_A" != "$CACHE_B" ]; then
+  SIZE_B=$(dir_size_bytes "$CACHE_B")
+else
+  SIZE_B=0
+fi
 TOTAL=$((SIZE_A + SIZE_B))
 
 if [ "$TOTAL" -le "$CAP_BYTES" ]; then
@@ -201,14 +229,8 @@ fi
 
 : >"$TMPD/files"
 for d in $ROOTS; do
-  :
-done
-for d in "$CACHE_A" "$CACHE_B"; do
   [ -n "$d" ] || continue
   [ -d "$d" ] || continue
-  if [ -n "$CACHE_A" ] && [ -n "$CACHE_B" ] && [ "$CACHE_A" = "$CACHE_B" ] && [ "$d" = "$CACHE_B" ]; then
-    continue
-  fi
   find "$d" -type f -print 2>/dev/null >>"$TMPD/files" || true
 done
 
@@ -222,6 +244,7 @@ fi
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   inside_watch "$f" || continue
+  is_protected "$f" && continue
   [ -f "$f" ] && [ ! -L "$f" ] || continue
   if [ "$STAT_FLAVOR" = gnu ]; then
     info=$(stat -c '%Y %s' "$f" 2>/dev/null) || continue
@@ -243,6 +266,7 @@ while IFS="$TAB" read -r mtime fsize fpath; do
   [ -n "$fpath" ] || continue
   [ $((TOTAL - FREED)) -gt "$CAP_BYTES" ] || break
   inside_watch "$fpath" || continue
+  is_protected "$fpath" && continue
   [ -f "$fpath" ] && [ ! -L "$fpath" ] || continue
   FREED=$((FREED + fsize))
   COUNT=$((COUNT + 1))
@@ -263,6 +287,7 @@ DELETED=0
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   inside_watch "$f" || continue
+  is_protected "$f" && continue
   [ -f "$f" ] && [ ! -L "$f" ] || continue
   if rm -f "$f" 2>/dev/null; then
     DELETED=$((DELETED + 1))
@@ -270,7 +295,11 @@ while IFS= read -r f; do
 done <"$TMPD/picked"
 
 NEW_A=$(dir_size_bytes "$CACHE_A")
-NEW_B=$(dir_size_bytes "$CACHE_B")
+if [ -n "$CACHE_B" ] && [ "$CACHE_A" != "$CACHE_B" ]; then
+  NEW_B=$(dir_size_bytes "$CACHE_B")
+else
+  NEW_B=0
+fi
 NEW_TOTAL=$((NEW_A + NEW_B))
 ACTUAL_FREED=$((TOTAL - NEW_TOTAL))
 

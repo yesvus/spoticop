@@ -223,7 +223,13 @@ struct AboutTabView: View {
                 .buttonStyle(.plain)
 
                 Button(action: {
-                    NSWorkspace.shared.selectFile(config.cacheAURL.path, inFileViewerRootedAtPath: "")
+                    let path = config.cacheAURL.path
+                    if FileManager.default.fileExists(atPath: path) {
+                        NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
+                    } else {
+                        let parent = config.cacheAURL.deletingLastPathComponent().path
+                        NSWorkspace.shared.selectFile(parent, inFileViewerRootedAtPath: "")
+                    }
                 }) {
                     HStack(spacing: 6) {
                         Image(systemName: "folder")
