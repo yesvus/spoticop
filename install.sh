@@ -3,10 +3,15 @@ set -eu
 
 PROG="spoticop"
 BIN_SRC="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/spoticop"
+CLEANUP_BIN=""
 
 if [ ! -f "$BIN_SRC" ]; then
-  echo "Error: $BIN_SRC not found." >&2
-  exit 1
+  echo "Downloading $PROG..."
+  TMP_BIN=$(mktemp)
+  CLEANUP_BIN="$TMP_BIN"
+  trap 'rm -f "$CLEANUP_BIN"' EXIT
+  curl -fsSL "https://raw.githubusercontent.com/yesvus/spoticop/main/spoticop" -o "$TMP_BIN"
+  BIN_SRC="$TMP_BIN"
 fi
 
 DEST_DIR="/usr/local/bin"

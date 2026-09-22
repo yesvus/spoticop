@@ -28,38 +28,34 @@ SpotiCop enforces a strict storage cap on Spotify's rebuildable cache:
 
 ## Installation
 
-### GUI App (macOS)
+### Download
 
-1. Build or download `SpotiCop.app`
-2. Move it to `/Applications`
-3. Open it, set your cap (e.g. 1 GB), and close the window
+1. Download **[SpotiCop.dmg](https://github.com/yesvus/spoticop/releases/latest)**
+2. Drag `SpotiCop` into your `Applications` folder
+3. Open it once to choose your cache cap (default: 1 GB)
 
-The app stays in your Dock while settings are open. Closing the window lets it sleep while the background agent handles weekly patrols.
+The app stays in your Dock while settings are open. Closing the window lets it sleep while the background agent patrols on schedule.
+
+### Terminal One-Liner
+
+If you prefer headless CLI and launchd patrols without the GUI:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/yesvus/spoticop/main/install.sh | sh
+```
 
 ### Build from source
-
-Requires macOS with Xcode Command Line Tools (`swiftc`):
 
 ```sh
 git clone https://github.com/yesvus/spoticop.git
 cd spoticop
-./macOS/build.sh
+./macOS/package.sh
 cp -R macOS/build/SpotiCop.app /Applications/
 ```
 
-### Headless CLI
-
-If you only want the command-line patrol and launchd agent without the GUI:
-
-```sh
-./install.sh
-```
-
-Installs `spoticop` to `~/.local/bin/spoticop`, writes a default config to `~/.config/spoticop/config`, and registers the weekly launchd schedule.
-
 ## Manual Patrol
 
-You can run patrols anytime directly from the terminal:
+Run patrols anytime directly from your terminal:
 
 ```sh
 spoticop --cap 1GB
@@ -70,6 +66,10 @@ Or simulate to see what would be evicted without deleting anything:
 ```sh
 spoticop --cap 1GB --dry-run
 ```
+
+## Acknowledgements
+
+- GUI design inspired by [Mac Mouse Fix](https://github.com/noah-nuebling/mac-mouse-fix).
 
 ## License
 
