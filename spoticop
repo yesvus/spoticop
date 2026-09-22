@@ -1,0 +1,278 @@
+#!/bin/sh
+# spoticop - Spotify cop on patrol.
+# Trims Spotify rebuildable cache dirs down to a configurable cap, oldest files first.
+
+VERSION="0.1.0"
+PROG="spoticop"
+
+DEFAULT_CAP="1GB"
+DEFAULT_CACHE_A="$HOME/Library/Caches/com.spotify.client"
+DEFAULT_CACHE_B="$HOME/Library/Application Support/Spotify/PersistentCache"
+LINUX_CACHE_A="$HOME/.cache/spotify"
+LINUX_CACHE_B="$HOME/.config/spotify/PersistentCache"
+DEFAULT_LOG="$HOME/Library/Logs/spoticop.log"
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/spoticop/config"
+
+die() {
+  echo "$PROG: $*" >&2
+  exit "${2:-1}"
+}
+
+usage() {
+  cat <<USAGE
+Usage: $PROG [options]
+
+Trim Spotify cache dirs down to a configurable cap, oldest files first.
+
+Options:
+  --cap SIZE        cap size like 500MB, 1GB, 2.5GB (default: $DEFAULT_CAP)
+  --dry-run         list what would be deleted without deleting
+  --log PATH        log file (default: $DEFAULT_LOG)
+  --cache-a PATH    override first cache dir
+  --cache-b PATH    override second cache dir
+  --config PATH     config file (default: $CONFIG_FILE)
+  --help            show this text and exit
+  --version         show version and exit
+
+Config file keys (CLI flags win over these): CAP, DRY_RUN, LOG, DAY, TIME.
+Env overrides for scripting: SPOTICOP_CAP, SPOTICOP_DRY_RUN, SPOTICOP_LOG.
+USAGE
+}
+
+parse_size() {
+  printf '%s' "$1" | awk '
+    {
+      s = $0
+      gsub(/^[ \t]+|[ \t]+$/, "", s)
+      if (match(s, /^[0-9]+(\.[0-9]+)?/) == 0) { exit 1 }
+      num = substr(s, RSTART, RLENGTH)
+      unit = substr(s, RLENGTH + 1)
+      gsub(/[ \t]/, "", unit)
+      u = tolower(unit)
+      if (u == "" || u == "b") mult = 1
+      else if (u == "k" || u == "kb") mult = 1024
+      else if (u == "m" || u == "mb") mult = 1024 * 1024
+      else if (u == "g" || u == "gb") mult = 1024 * 1024 * 1024
+      else if (u == "t" || u == "tb") mult = 1024 * 1024 * 1024 * 1024
+      else exit 1
+      printf "%.0f", num * mult
+    }'
+}
+
+format_bytes() {
+  awk -v b="$1" 'BEGIN {
+    if (b >= 1099511627776) printf "%.2f TB", b / 1099511627776
+    else if (b >= 1073741824) printf "%.2f GB", b / 1073741824
+    else if (b >= 1048576) printf "%.1f MB", b / 1048576
+    else if (b >= 1024) printf "%.1f KB", b / 1024
+    else printf "%d B", b
+  }'
+}
+
+dir_size_bytes() {
+  d="$1"
+  [ -d "$d" ] || { echo 0; return 0; }
+  find "$d" -type f -exec wc -c {} + < /dev/null 2>/dev/null \
+    | awk '$2 != "total" { s += $1 } END { print s + 0 }'
+}
+
+spotify_running() {
+  checker="${SPOTICOP_PGREP:-pgrep}"
+  if command -v "$checker" >/dev/null 2>&1; then
+    "$checker" -x Spotify >/dev/null 2>&1
+  else
+    ps -A -o comm= 2>/dev/null | grep -qx "Spotify"
+  fi
+}
+
+log_line() {
+  parent=$(dirname "$LOG_FILE")
+  [ -d "$parent" ] || mkdir -p "$parent" 2>/dev/null || return 0
+  printf '%s [INFO] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$LOG_FILE" 2>/dev/null || true
+}
+
+inside_watch() {
+  case "$1" in
+    "$CACHE_A"/* | "$CACHE_B"/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+load_config_value() {
+  [ -f "$CONFIG_FILE" ] || return 0
+  while IFS="=" read -r k v; do
+    k=$(printf '%s' "$k" | tr -d ' \t\r')
+    v=$(printf '%s' "$v" | sed 's/^[ \t]*//;s/[ \t\r]*$//')
+    case "$k" in
+      CAP) [ -n "$v" ] && CONFIG_CAP="$v" ;;
+      DRY_RUN) [ -n "$v" ] && CONFIG_DRY_RUN="$v" ;;
+      LOG) [ -n "$v" ] && CONFIG_LOG="$v" ;;
+    esac
+  done <"$CONFIG_FILE"
+}
+
+CAP_ARG=""
+DRY_RUN_ARG=""
+LOG_ARG=""
+CACHE_A_ARG=""
+CACHE_B_ARG=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --cap) [ $# -ge 2 ] || { usage >&2; exit 2; }; CAP_ARG="$2"; shift 2 ;;
+    --cap=*) CAP_ARG="${1#--cap=}"; shift ;;
+    --dry-run) DRY_RUN_ARG=1; shift ;;
+    --log) [ $# -ge 2 ] || { usage >&2; exit 2; }; LOG_ARG="$2"; shift 2 ;;
+    --log=*) LOG_ARG="${1#--log=}"; shift ;;
+    --cache-a) [ $# -ge 2 ] || { usage >&2; exit 2; }; CACHE_A_ARG="$2"; shift 2 ;;
+    --cache-a=*) CACHE_A_ARG="${1#--cache-a=}"; shift ;;
+    --cache-b) [ $# -ge 2 ] || { usage >&2; exit 2; }; CACHE_B_ARG="$2"; shift 2 ;;
+    --cache-b=*) CACHE_B_ARG="${1#--cache-b=}"; shift ;;
+    --config) [ $# -ge 2 ] || { usage >&2; exit 2; }; CONFIG_FILE="$2"; shift 2 ;;
+    --config=*) CONFIG_FILE="${1#--config=}"; shift ;;
+    --help) usage; exit 0 ;;
+    --version) echo "$PROG $VERSION"; exit 0 ;;
+    -*) echo "$PROG: unknown option $1" >&2; usage >&2; exit 2 ;;
+    *) echo "$PROG: unexpected argument $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+CONFIG_CAP=""
+CONFIG_DRY_RUN=""
+CONFIG_LOG=""
+case "$CONFIG_FILE" in
+  "~/"*) CONFIG_FILE="$HOME/${CONFIG_FILE#\~/}" ;;
+esac
+load_config_value
+
+CAP_STR="${CAP_ARG:-${SPOTICOP_CAP:-${CONFIG_CAP:-$DEFAULT_CAP}}}"
+DRY_RUN="${DRY_RUN_ARG:-${SPOTICOP_DRY_RUN:-${CONFIG_DRY_RUN:-0}}}"
+LOG_FILE="${LOG_ARG:-${SPOTICOP_LOG:-${CONFIG_LOG:-$DEFAULT_LOG}}}"
+CACHE_A="${CACHE_A_ARG:-${SPOTICOP_CACHE_A:-$DEFAULT_CACHE_A}}"
+CACHE_B="${CACHE_B_ARG:-${SPOTICOP_CACHE_B:-$DEFAULT_CACHE_B}}"
+
+case "$LOG_FILE" in
+  "~/"*) LOG_FILE="$HOME/${LOG_FILE#\~/}" ;;
+esac
+case "$CACHE_A" in
+  "~/"*) CACHE_A="$HOME/${CACHE_A#\~/}" ;;
+esac
+case "$CACHE_B" in
+  "~/"*) CACHE_B="$HOME/${CACHE_B#\~/}" ;;
+esac
+
+if [ ! -d "$CACHE_A" ] && [ -d "$LINUX_CACHE_A" ] && [ -z "$CACHE_A_ARG" ] && [ -z "${SPOTICOP_CACHE_A:-}" ]; then
+  CACHE_A="$LINUX_CACHE_A"
+fi
+if [ ! -d "$CACHE_B" ] && [ -d "$LINUX_CACHE_B" ] && [ -z "$CACHE_B_ARG" ] && [ -z "${SPOTICOP_CACHE_B:-}" ]; then
+  CACHE_B="$LINUX_CACHE_B"
+fi
+
+CAP_BYTES=$(parse_size "$CAP_STR") || die "invalid cap size: $CAP_STR (try 500MB, 1GB)" 2
+[ "$CAP_BYTES" -gt 0 ] || die "cap must be greater than zero" 2
+
+if spotify_running; then
+  echo "$PROG: Spotify is running, skipping patrol to avoid touching open files."
+  log_line "Spotify running, patrol skipped (cap $(format_bytes "$CAP_BYTES"))"
+  exit 0
+fi
+
+SIZE_A=$(dir_size_bytes "$CACHE_A")
+SIZE_B=$(dir_size_bytes "$CACHE_B")
+TOTAL=$((SIZE_A + SIZE_B))
+
+if [ "$TOTAL" -le "$CAP_BYTES" ]; then
+  echo "$PROG: cache $(format_bytes "$TOTAL") within cap $(format_bytes "$CAP_BYTES"), nothing to do."
+  log_line "cache $(format_bytes "$TOTAL") within cap $(format_bytes "$CAP_BYTES"), nothing removed"
+  exit 0
+fi
+
+OVER=$((TOTAL - CAP_BYTES))
+
+TMPD=$(mktemp -d) || die "cannot create temp dir" 1
+trap 'rm -rf "$TMPD"' EXIT INT TERM
+TAB=$(printf '\t')
+
+if [ -n "$CACHE_A" ] && [ -n "$CACHE_B" ] && [ "$CACHE_A" = "$CACHE_B" ]; then
+  ROOTS="$CACHE_A"
+else
+  ROOTS="$CACHE_A $CACHE_B"
+fi
+
+: >"$TMPD/files"
+for d in $ROOTS; do
+  :
+done
+for d in "$CACHE_A" "$CACHE_B"; do
+  [ -n "$d" ] || continue
+  [ -d "$d" ] || continue
+  if [ -n "$CACHE_A" ] && [ -n "$CACHE_B" ] && [ "$CACHE_A" = "$CACHE_B" ] && [ "$d" = "$CACHE_B" ]; then
+    continue
+  fi
+  find "$d" -type f -print 2>/dev/null >>"$TMPD/files" || true
+done
+
+if stat -c '%Y %s' / >/dev/null 2>&1; then
+  STAT_FLAVOR=gnu
+else
+  STAT_FLAVOR=bsd
+fi
+
+: >"$TMPD/candidates"
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  inside_watch "$f" || continue
+  [ -f "$f" ] && [ ! -L "$f" ] || continue
+  if [ "$STAT_FLAVOR" = gnu ]; then
+    info=$(stat -c '%Y %s' "$f" 2>/dev/null) || continue
+  else
+    info=$(stat -f '%m %z' "$f" 2>/dev/null) || continue
+  fi
+  # shellcheck disable=SC2086
+  set -- $info
+  [ $# -ge 2 ] || continue
+  printf '%s\t%s\t%s\n' "$1" "$2" "$f" >>"$TMPD/candidates"
+done <"$TMPD/files"
+
+sort -t "$TAB" -k1,1n -k3,3 "$TMPD/candidates" -o "$TMPD/sorted" 2>/dev/null || die "cannot sort file list" 1
+
+FREED=0
+COUNT=0
+: >"$TMPD/picked"
+while IFS="$TAB" read -r mtime fsize fpath; do
+  [ -n "$fpath" ] || continue
+  [ $((TOTAL - FREED)) -gt "$CAP_BYTES" ] || break
+  inside_watch "$fpath" || continue
+  [ -f "$fpath" ] && [ ! -L "$fpath" ] || continue
+  FREED=$((FREED + fsize))
+  COUNT=$((COUNT + 1))
+  printf '%s\n' "$fpath" >>"$TMPD/picked"
+done <"$TMPD/sorted"
+
+if [ "$DRY_RUN" = 1 ] || [ "$DRY_RUN" = true ] || [ "$DRY_RUN" = yes ]; then
+  PROJECTED=$((TOTAL - FREED))
+  echo "$PROG: dry run, no files deleted."
+  echo "  cache: $(format_bytes "$TOTAL"), cap: $(format_bytes "$CAP_BYTES"), would free: $(format_bytes "$FREED") in $COUNT files, projected: $(format_bytes "$PROJECTED")"
+  echo "  oldest files first:"
+  cat "$TMPD/picked"
+  log_line "dry run, $COUNT files ($(format_bytes "$FREED")) over cap $(format_bytes "$CAP_BYTES"), nothing removed"
+  exit 0
+fi
+
+DELETED=0
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  inside_watch "$f" || continue
+  [ -f "$f" ] && [ ! -L "$f" ] || continue
+  if rm -f "$f" 2>/dev/null; then
+    DELETED=$((DELETED + 1))
+  fi
+done <"$TMPD/picked"
+
+NEW_A=$(dir_size_bytes "$CACHE_A")
+NEW_B=$(dir_size_bytes "$CACHE_B")
+NEW_TOTAL=$((NEW_A + NEW_B))
+ACTUAL_FREED=$((TOTAL - NEW_TOTAL))
+
+echo "$PROG: patrol complete, freed $(format_bytes "$ACTUAL_FREED") in $DELETED files. $(format_bytes "$TOTAL") -> $(format_bytes "$NEW_TOTAL") (cap $(format_bytes "$CAP_BYTES"))."
+log_line "patrol complete, removed $DELETED files, freed $(format_bytes "$ACTUAL_FREED"), $(format_bytes "$TOTAL") -> $(format_bytes "$NEW_TOTAL") (cap $(format_bytes "$CAP_BYTES"))"
