@@ -20,6 +20,8 @@ assert_eq() {
 TDIR=$(mktemp -d)
 trap 'rm -rf "$TDIR"' EXIT
 
+export SPOTICOP_PGREP="false"
+
 C1="$TDIR/cache1"
 C2="$TDIR/cache2"
 LOG="$TDIR/spoticop.log"
@@ -60,11 +62,11 @@ assert_eq "0" "$?" "second oldest file old.dat was removed"
 assert_eq "0" "$?" "newest file new.dat kept"
 
 # 3. Spotify running test
-export SPOTICOP_PGREP="true"
+SPOTICOP_PGREP="true"
 run_out=$("$BIN" --cache-a "$C1" --cache-b "$C2" --cap 1MB --log "$LOG")
 echo "$run_out" | grep -q "Spotify is running, skipping patrol"
 assert_eq "0" "$?" "skipped when spotify running"
-unset SPOTICOP_PGREP
+SPOTICOP_PGREP="false"
 
 # 4. Config file parsing test
 mkdir -p "$(dirname "$CONF")"
