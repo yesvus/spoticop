@@ -26,6 +26,19 @@ SpotiCop enforces a strict storage cap on Spotify's rebuildable cache:
 - **Peaceful de-escalation**: If Spotify is actively running, SpotiCop stands down so playing audio never skips or crashes.
 - **Set and forget**: Runs once a week in the background via launchd, or whenever you tap Patrol Now.
 
+## Install with an AI coding agent
+
+Copy this into your coding agent:
+
+~~~text
+Install https://github.com/yesvus/spoticop on my Mac.
+Read INSTALL_PROMPT.md and README.md. Prefer the official release.
+Do a dry run before deleting cache, and ask before enabling
+scheduled patrols or touching files. Never request account secrets.
+~~~
+
+[Complete agent installation prompt](INSTALL_PROMPT.md).
+
 ## Installation
 
 ### Download
